@@ -70,14 +70,10 @@ namespace TerraBlind
 				}
 			}
 
-			// Wake the brain ONCE when an emergency begins, it decides the real response (flee where, fight, retreat).
-			// The reflex only bought time. Reset when danger clears so the next episode fires again.
+			// Remember the episode so repeated emergency work stays edge-triggered.
 			if (emergency && !_firedThisEmergency)
 			{
 				_firedThisEmergency = true;
-				string kind = inLava ? "lava" : "low_hp";
-				HttpServerSystem.PushEvent("survival",
-					"{\"kind\":\"" + kind + "\",\"hp\":" + p.statLife + ",\"max_hp\":" + p.statLifeMax2 + "}");
 			}
 			else if (!emergency)
 			{

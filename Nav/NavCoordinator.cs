@@ -466,7 +466,6 @@ namespace TerraBlind
                 $",\"reason\":\"{reason}\"" +
                 $",\"last_node_idx\":{lastIdx},\"last_action\":\"{lastAction}\"" +
                 $",\"px\":{pcx},\"py\":{feetY},\"stall_count\":{stallCount}}}");
-            BreakpointSystem.CheckNavFailed();
         }
 
         private static void Replan(Player p)
@@ -844,9 +843,6 @@ namespace TerraBlind
 
                     DiagLog.Write($"[nav] node[{_pathIdx}] ({_target.Wx},{_target.Wy}) {_target.Action} from ({pcx},{feetY})");
                     EmitNodeEnter(_pathIdx, _target, pcx, feetY, p.velocity.X, p.velocity.Y);
-                    BreakpointSystem.CheckNodeAction(_target.Action);
-                    BreakpointSystem.CheckPosition(pcx, feetY);
-
                     {
                         string fromAction = _pathIdx > 0 ? _path[_pathIdx - 1].Action : "start";
                         string toAction = _target.Action;

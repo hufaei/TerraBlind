@@ -1,15 +1,13 @@
-using Microsoft.Xna.Framework;
 using System.Collections.Generic;
 using Terraria;
 using Terraria.ID;
-using Terraria.ModLoader;
 
 namespace TerraBlind
 {
-    public class MazeWand : ModItem
+    // Cost-field implementation used by the runtime navigator. The old debug
+    // wand item and recipe were removed with the visualization UI.
+    public static class MazeWand
     {
-        public override string Texture => "Terraria/Images/Item_" + ItemID.RodofDiscord;
-
         // cost ≈ 每格相对耗时。走 3px/帧,落到头 10px/帧,所以往下约是横走的 1/3;往上最慢。
         // 挖按真帧数:铜镐石头 45 帧/格,走一格 5.3 帧=3,故横挖 26。原来 120 等于"绕 40 格也比挖便宜",墙前必掉头。
         const int MoveDown = 1, MoveSide = 3, MoveUp = 9;
@@ -68,88 +66,6 @@ namespace TerraBlind
                 if (f.HasTile && f.TileType == TileID.HoneyBlock) extra += HoneyExtra;
             }
             return extra;
-        }
-
-        public override void SetDefaults()
-        {
-            Item.width = 28;
-            Item.height = 28;
-            Item.useStyle = ItemUseStyleID.Swing;
-            Item.useTime = 20;
-            Item.useAnimation = 20;
-            Item.rare = ItemRarityID.Green;
-            Item.maxStack = 1;
-            Item.noMelee = true;
-        }
-
-        public override bool AltFunctionUse(Player player) => true;
-
-        // 调试工具:左键设 point1(目标)并清空,右键设 point2(起点),两个都有就跑场画线。
-        // static 是因为这是单实例手动探针,不走 nav 管线。
-        static (int x, int y)? _p1, _p2;
-        // 极小点工具要知道当前这张场是朝哪个目标建的
-        public static (int x, int y)? Point2 => _p2;
-        static volatile bool _mazeBusy;
-
-        // J 开关朝 point2 的 receding nav,拿大场当罗盘。从玩家【当前】位置起步
-        // 场是按目标缓存的、哪儿都有效,所以建完场再走远也不影响。
-        public static void ToggleNav()
-        {
-            DiagLog.Write("[maze-nav] J pressed");
-            if (RecedingNav.Active) { RecedingNav.Stop(); Chatter.Say("[TerraBlind] receding nav OFF"); return; }
-            if (!_p2.HasValue) { DiagLog.Write("[maze-nav] J → no point2 (goal) set"); Chatter.Say("[TerraBlind] set point2 (right-click) first"); return; }
-            DiagLog.Write($"[maze-nav] J → receding toward p2=({_p2.Value.x},{_p2.Value.y})");
-            RecedingNav.Start(_p2.Value.x, _p2.Value.y);
-        }
-
-        public override bool? UseItem(Player player)
-        {
-            if (player != Main.LocalPlayer) return null;
-
-            int mx = (int)((Main.mouseX + Main.screenPosition.X) / 16f);
-            int my = (int)((Main.mouseY + Main.screenPosition.Y) / 16f);
-
-            if (player.altFunctionUse == 2)
-                _p2 = (mx, my);
-            else
-            {
-                _p1 = (mx, my);
-                _p2 = null; // left-click resets the pair
-            }
-            DiagLog.Write($"[maze] p1={_p1?.ToString() ?? "-"} p2={_p2?.ToString() ?? "-"}");
-
-            // p2 = goal, p1 = start. Flood the field FROM p2 (the goal) and cache it keyed on p2, so pressing J reuses
-            // this very field instead of rebuilding. Player is expected to stay near p1 (inside the field's box).
-            if (_p1.HasValue && _p2.HasValue)
-                RunMazeAsync(_p2.Value, _p1.Value);
-            return true;
-        }
-
-        //千格距离的 BuildField 耗时几百 ms, run it off the main thread so the game doesn't hitch. PlanCtx-free here
-        // (BuildField has no shared scratch), and PathVisSystem.SetTiles is lock-guarded, so the bg thread can draw.
-        static void RunMazeAsync((int x, int y) goal, (int x, int y) start)
-        {
-            if (_mazeBusy) { DiagLog.Write("[maze] busy, ignored"); return; }
-            _mazeBusy = true;
-            System.Threading.Tasks.Task.Run(() =>
-            {
-                try
-                {
-                    DiagLog.StartRun($"{start.x}_{start.y}__{goal.x}_{goal.y}");
-                    var sw = System.Diagnostics.Stopwatch.StartNew();
-                    var field = BuildField(goal.x, goal.y, start.x, start.y, bigMargin: true);
-                    _cachedField = field; _cachedGoal = (goal.x, goal.y);   // reuse on J (GetField(p2) hits this)
-                    var (path, breaks) = DescendPath(field, start.x, start.y, goal.x, goal.y);
-                    DiagLog.Write($"[maze] start=({start.x},{start.y}) goal=({goal.x},{goal.y}) path={path.Count} breaks={breaks} field={field.Count} ms={sw.Elapsed.TotalMilliseconds:0} startInField={field.ContainsKey(start)}");
-                    var tiles = new List<(int, int, Color)>();
-                    foreach (var (x, y) in path)
-                        tiles.Add((x, y, PathPlanner.IsBlockPublic(x, y) ? new Color(255, 60, 60) : new Color(40, 200, 255)));
-                    PathVisSystem.SetTiles(tiles);
-                    DiagLog.EndRun();
-                }
-                catch (System.Exception e) { DiagLog.Write($"[maze] EXC {e.Message}"); DiagLog.EndRun(); }
-                finally { _mazeBusy = false; }
-            });
         }
 
         // 每格一个节点,4 连通,不管物理。执行器读的是这张图的【梯度】,不是画出来的那条线;死胡同归执行层管。
@@ -320,52 +236,6 @@ namespace TerraBlind
             return dist;
         }
 
-        // 多源 Dijkstra,每个源 cost 0。下地狱的代价是拓扑的不是逐列的:S 形洞穴从顶上进,
-        // 比任何一处直挖都便宜。
-        public static Dictionary<(int, int), int> BuildFieldMulti(System.Collections.Generic.List<(int x, int y)> sources, int minX, int maxX, int minY, int maxY)
-        {
-            _fieldPickPower = BestPickPower();
-            _fieldLavaSurvivable = Unstick.BlockItem(Main.LocalPlayer) >= 0;
-
-            var dist = new Dictionary<(int, int), int>();
-            var closed = new HashSet<(int, int)>();
-            var pq = new SortedSet<(int cost, int x, int y)>();
-            foreach (var (sx0, sy0) in sources) { dist[(sx0, sy0)] = 0; pq.Add((0, sx0, sy0)); }
-
-            int[] dxs = { 1, -1, 0, 0 };
-            int[] dys = { 0, 0, 1, -1 };
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            while (pq.Count > 0)
-            {
-                var cur = pq.Min;
-                pq.Remove(cur);
-                var (cost, cx, cy) = cur;
-                if (!closed.Add((cx, cy))) continue;
-
-                for (int i = 0; i < 4; i++)
-                {
-                    int nx = cx + dxs[i], ny = cy + dys[i];
-                    if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
-                    if (closed.Contains((nx, ny))) continue;
-                    int sc = StepCost(cx, cy, nx, ny);
-                    if (sc == Impassable) continue;   // 挖不动 → 这条边不存在,别入队(直接相加会溢出)
-                    // 和 BuildField 同一条:站不住的格不该发 H
-                    int stand = StandPenalty(nx, ny);
-                    if (stand == Impassable) continue;
-                    int nc = cost + sc + stand;
-                    if (dist.TryGetValue((nx, ny), out int old) && nc >= old) continue;
-                    dist[(nx, ny)] = nc;
-                    pq.Add((nc, nx, ny));
-                }
-            }
-            DiagLog.Write($"[descent-field] sources={sources.Count} dist={dist.Count} ms={sw.Elapsed.TotalMilliseconds:0}");
-            return dist;
-        }
-
-        // exposed for /descent_route to price a traced detour path edge by edge in BOTH directions
-        // (going down a chasm is cheap, climbing back out is not, a one-way field hides that).
-        public static int StepCostPublic(int cx, int cy, int nx, int ny) => StepCost(cx, cy, nx, ny);
-
         // 人要【站在】这一格得先付多少。站得住=0;站不住就得自己造落脚点,那是真代价。
         // 判据只此一份(CellKind),不在这儿另编。
         static int StandPenalty(int x, int y)
@@ -400,7 +270,7 @@ namespace TerraBlind
             return best;
         }
 
-        static int StepCost(int cx, int cy, int nx, int ny)
+		static int StepCost(int cx, int cy, int nx, int ny)
         {
             // 岩浆=重开,所以是【真禁行】不是"贵"。以前记的是有限高价,绕路一贵线就直接从岩浆里穿过去。
             // 而且人有 3 格高:只看脚下那格,贴着岩浆面走(头胸泡在里面)照样算干燥。
@@ -414,7 +284,8 @@ namespace TerraBlind
                 var pt = Main.tile[cx, py2];
                 if (pt.HasTile && (pt.TileType == TileID.PressurePlates || pt.TileType == TileID.WeightedPressurePlate))
                     return PlateCost;
-            }
+		}
+
             // 人 3 行高,只看脚下会把烟囱当免费爬。斜砖只在脚那行豁免(胸口一块斜砖就卡住);
             // 上锁的门另判:MineableWith 说能挖,可神庙门没钥匙砸不开
             for (int r = 0; r < 3; r++)
@@ -495,6 +366,10 @@ namespace TerraBlind
             if (!wall && horizontal) baseCost += AirCost(cx, cy, nx - cx);
             return baseCost + MediumExtra(cx, cy);
         }
+
+		// Kept as a narrow diagnostic hook for StateSpacePlanner's cost comparison log.
+		public static int StepCostPublic(int cx, int cy, int nx, int ny)
+			=> StepCost(cx, cy, nx, ny);
 
         // 从 (x,y) 掉下去,落不落得住。探到实处/平台=落得住;探完 DropProbe 还没底=不算,那是无底洞。
         //
@@ -683,27 +558,6 @@ namespace TerraBlind
             return (path, breaks);
         }
 
-        static void DrawHeatmap(Dictionary<(int, int), int> field, int sx, int sy, int gx, int gy)
-        {
-            // normalize by the start cell's cost so the gradient spreads across the actual start→goal range;
-            // cells farther than start clamp to red. (using global max washes everything green, a few far
-            // dig-heavy cells blow up the scale.)
-            float scale = field.TryGetValue((sx, sy), out int sc) && sc > 0 ? sc : 1f;
-            var tiles = new List<(int, int, Color)>();
-            foreach (var kv in field)
-            {
-                float t = System.Math.Min(1f, kv.Value / scale);
-                var c = new Color(t, 1f - t, 0.2f) * 0.5f;
-                tiles.Add((kv.Key.Item1, kv.Key.Item2, c));
-            }
-            DiagLog.Write($"[maze-field] fieldSize={field.Count} scale={scale} startInField={field.ContainsKey((sx, sy))}");
-            PathVisSystem.SetTiles(tiles);
-        }
-
-        public override void AddRecipes()
-        {
-            CreateRecipe().AddIngredient(ItemID.DirtBlock, 1).AddTile(TileID.WorkBenches).Register();
-        }
     }
 
     // 【场跟着世界走】。mod 不会因为退出世界而重载,不清的话第二局拿着第一局的地形当罗盘,

@@ -36,26 +36,21 @@ namespace TerraBlind
 		[DefaultValue(true)]
 		public bool BossKnowledge;
 
-		// 留空就去环境变量和 ~/.typesafe_key 找。【填了就会存进 ModConfigs/TerraBlind.json】
-		[DefaultValue("")]
-		public string TypeSafeKey;
+		// Provider keys stay in Decision Infra. The mod only knows the gateway route and selected model.
+		[DefaultValue(DecisionGateway.DefaultUrl)]
+		public string DecisionGatewayUrl;
+
+		[DefaultValue(DecisionGateway.DefaultModel)]
+		[OptionStrings(new string[] { DecisionGateway.JevModel, DecisionGateway.LayaModel })]
+		public string DecisionModel;
 
 		[Header("Debug")]
-		[DefaultValue(true)]
-		public bool ShowOverlay;
-
 		// 单独开关:只想看 Jev 在想什么,不用连带打开一屏的格子覆盖层
 		[DefaultValue(false)]
 		public bool ShowJevHud;
 
-		// A* 的轨迹/探索点最密,盖信息最多,单独一条
-		[DefaultValue(false)]
-		public bool ShowPlannerTrails;
-
 		public override void OnChanged()
 		{
-			PathVisSystem.Enabled = ShowOverlay;
-			PathVisSystem.ShowPlanner = ShowPlannerTrails;
 			RiskLayer.Enabled = AvoidDanger;
 			Combat.Enabled = FightBack;
 			Dodge.Enabled = DodgeBoss;

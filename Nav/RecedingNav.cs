@@ -148,7 +148,7 @@ namespace TerraBlind
         {
             // 【同一个目标已经在跑就别重来】。Start 会作废建场任务、清掉 Commitment/Trap
             // 的全部记录。每帧调一次的话场永远建不完,人一步不动,屏幕刷满 building field
-            // (现场:WofPrep 的兜底每帧调,日志 6413~6857 连着几百条)。
+            // 调用方可能每帧兜底请求，重复目标不能反复重启规划。
             // 调用方少写一个 if 就会这样,所以守在这里,不指望每个调用点都记得
             // 【先落地再比】。Snap 会把 goalWy 改写成真正站得住的那一行,存下来的是改写后的值;
             // 拿原始值去比永远不相等,守卫等于没写
@@ -189,9 +189,7 @@ namespace TerraBlind
             // 刹车没停稳就被外部叫停:别让 SettleAt 留在后台继续抢控制
             if (_braking) { SettleAt.Stop(); _braking = false; }
             if (Active && LastStop == null) LastStop = "stopped";
-            if (Active)   // only fire on an actual running→stopped transition
-                HttpServerSystem.PushEvent("nav_done", "{\"result\":\"" + (LastStop ?? "stopped") + "\"}");
-            Active = false;
+			Active = false;
             AxisLock.Release(Owner);   // 停了就放锁,别让下一个动作等一个已经不跑的持有者
             StateSpacePlanner.StopNav();
             RecedingVis.Clear();

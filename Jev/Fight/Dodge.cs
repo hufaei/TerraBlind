@@ -1,5 +1,4 @@
 using System.Net.Http;
-using System.Text;
 using Terraria;
 
 namespace TerraBlind
@@ -20,6 +19,7 @@ namespace TerraBlind
 		const int RoomScanCells = 60;
 		// 意图过期就退回保守行为。拿 3 秒前的判断当真比没有判断更糟
 		const long IntentTtlMs = 1500;
+		const long RequestIntervalMs = 200;
 
 		// 二段跳:落地才回充,空中再按一次触发,而且【必须松一帧】才算新按压
 		static bool _airJumpUsed;
@@ -66,24 +66,14 @@ namespace TerraBlind
 		static DodgeAct _saidAct = (DodgeAct)(-1);
 		static long _saidAt;
 
-		public const string Url = "https://api.typesafe.ai/v1/systemone";
-		public const string Model = "jev-latest";
 		static readonly HttpClient _http = new() { Timeout = System.TimeSpan.FromSeconds(5) };
 		static volatile bool _busy;
 		static volatile string _pending;
 		// 发出去的那份现场,答案回来时一起记进日志 -- 只看结论看不出它为什么这么选
 		static string _lastFacts = "";
 		static long _actAt = -100000;
+		static long _lastRequestAt = -RequestIntervalMs;
 		static readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
-
-		static string _key;
-		static string Key()
-		{
-			if (_key != null) return _key.Length == 0 ? null : _key;
-			try { _key = System.IO.File.Exists(JevCombat.KeyPath) ? System.IO.File.ReadAllText(JevCombat.KeyPath).Trim() : ""; }
-			catch { _key = ""; }
-			return _key.Length == 0 ? null : _key;
-		}
 
 		// 【蠕虫三段和骷髅王的手都没有 boss 标志】,只认 npc.boss 的话走位层整场退出
 		// 清单只存 Combat.BossPart 一份,各存一份的话下个 boss 只会被加进一边
@@ -121,15 +111,20 @@ namespace TerraBlind
 
 			var done = _pending;
 			if (done != null) { _pending = null; Parse(done); }
-			string key = Key();
-			if (key != null && !_busy)
+			if (!_busy && _clock.ElapsedMilliseconds - _lastRequestAt >= RequestIntervalMs)
 			{
 				_lastFacts = Facts(p, boss, dist);
-				Fire(key, _lastFacts);
+				_lastRequestAt = _clock.ElapsedMilliseconds;
+				Fire(_lastFacts);
 			}
 
 			// 意图过期:退回"拉开距离",那是任何时候都不会送命的默认
 			var act = _clock.ElapsedMilliseconds - _actAt > IntentTtlMs ? DodgeAct.Back : Act;
+			if (act == DodgeAct.Grapple && !PlayerCapabilities.HasGrapple(p)) act = DodgeAct.Back;
+			if (act == DodgeAct.Float && !PlayerCapabilities.HasFeatherfall(p)) act = DodgeAct.Up;
+			if (act == DodgeAct.Up && p.velocity.Y >= 0f
+				&& !PlayerCapabilities.ExtraJumpReady(p) && !PlayerCapabilities.HasFeatherfall(p))
+				act = DodgeAct.Evade;
 			// 【禁用的意图退回 Keep,不是 Back】。禁 Close 的 boss 往往正是"太远也危险"那种,
 			// 自动后退等于换个方向送
 			if (BossBook.IsBanned(boss.type, act)) act = DodgeAct.Keep;
@@ -269,7 +264,8 @@ namespace TerraBlind
 				return true;
 			}
 			if (_hookCooldown > 0) { _hookCooldown--; return false; }
-			if (act != DodgeAct.Grapple) { _hookFrames = 0; return false; }
+			if (act != DodgeAct.Grapple || !PlayerCapabilities.HasGrapple(p))
+			{ _hookFrames = 0; return false; }
 			// 【钩爪也要松一帧】。vanilla 是 if(controlHook){ if(releaseHook) 发射; releaseHook=false; }
 			// else releaseHook=true -- 一直按住只发射一次,之后全是空按。和二段跳同一个坑
 			if (_hookFrames++ > HookGiveUpFrames) return false;
@@ -299,7 +295,8 @@ namespace TerraBlind
 
 			if (!want) return false;
 			if (onGround) { _jumpHeld = true; _holdFrames = 1; return true; }
-			if (!_airJumpUsed) { _airJumpUsed = true; _jumpHeld = true; _holdFrames = 1; return true; }
+			if (!_airJumpUsed && PlayerCapabilities.ExtraJumpReady(p))
+			{ _airJumpUsed = true; _jumpHeld = true; _holdFrames = 1; return true; }
 			return false;
 		}
 
@@ -327,7 +324,7 @@ namespace TerraBlind
 			if (_dashDir != 0 && p.dashDelay < 0) return _dashDir;
 
 			// dashDelay==0 才是就绪。>0 是内置冷却,<0 是正在冲
-			bool ready = p.dashType != 0 && p.dashDelay == 0 && p.dash == 0;
+			bool ready = PlayerCapabilities.DashReady(p);
 			if (!ready) { _dashGap = false; _dashDir = 0; return go; }
 
 			// 上一帧空了手,这一帧按下去 -- 双击成立。【按住不放】,
@@ -448,13 +445,14 @@ namespace TerraBlind
 				 + ",\"cells_of_room_to_my_left\":" + WallDistance(p, -1)
 				 + ",\"cells_of_room_to_my_right\":" + WallDistance(p, 1)
 				 + ",\"cells_of_room_above_me\":" + CeilingDistance(p)
-				 + ",\"double_jump_ready\":" + (!_airJumpUsed ? "true" : "false")
+				 + ",\"double_jump_ready\":" + (PlayerCapabilities.ExtraJumpReady(p) ? "true" : "false")
+				 + ",\"capabilities\":" + PlayerCapabilities.Json(p)
 				 // 【弹幕也要看见】。只扫 NPC 的话,打得到我的东西有一半不在视野里
 				 + ",\"incoming_projectiles\":" + ThreatScan.ProjJson(p, pcx, pcy)
 				 // 【逐发列表之外还要给汇总】。十几发各自的 vx/vy 看不出该往哪躲
 				 + ",\"projectile_pressure\":" + ThreatScan.PressureJson(p)
 				 + ",\"other_enemies\":" + ThreatScan.Json(p, pcx, pcy)
-				 + ",\"my_weapon_fires_by_itself\":true"
+				 + ",\"attack_controller_enabled\":" + (Combat.Enabled ? "true" : "false")
 				 // 【只描述地形,不替 boss 下结论】。"站着不动就会被撞"是克苏鲁之眼的事,
 				 // 写在这里等于对每个 boss 都这么说 -- 该由 how_this_boss_fights 去讲
 				 + ",\"arena\":\"" + JsonStr(BossBook.ArenaOf(boss.type)) + "\""
@@ -467,10 +465,11 @@ namespace TerraBlind
 
 		// 同一份 state 一次问完。【并行求值不加延迟】,多问几个等于白捡
 		static string Body(string state)
-			=> "{\"model\":\"" + Model + "\",\"state\":" + Quote(state) + ",\"questions\":{"
+			=> "{\"model\":" + DecisionGateway.Quote(DecisionGateway.Model) + ",\"state\":" + DecisionGateway.Quote(state) + ",\"questions\":{"
 			 + "\"intent\":{\"type\":\"choice\",\"instructions\":"
-			 + "\"泰拉瑞亚 boss 战。这个自动玩家的武器会自己瞄准开火,所以它只要决定走位。"
-			 + "碰到 boss 或者吃到弹幕才掉血。【说的是意图不是按键】,具体往左往右由代码每帧算。\",\"criteria\":{"
+			 + "\"泰拉瑞亚 boss 战。如果 attack_controller_enabled 为 true,攻击层会自动瞄准开火。这里仅决定走位。"
+			 + "碰到 boss 或者吃到弹幕才掉血。只能选择 capabilities 当前支持的动作。"
+			 + "【说的是意图不是按键】,具体往左往右由代码每帧算。\",\"criteria\":{"
 			 + "\"Keep\":\"保持现在的位置。够得着打,又没有被逼近,站稳输出\","
 			 + "\"Back\":\"拉开距离。它正冲过来,或者血不多了要留余地\","
 			 + "\"Close\":\"靠近一点。它飞远了打不到,或者它现在不动正好多打几下。"
@@ -496,7 +495,7 @@ namespace TerraBlind
 			 + "\"很安全,可以贴上去输出\",\"一般,保持中距\",\"有点险,拉开一些\","
 			 + "\"很险,离远点\",\"随时会死,能躲多远躲多远\"]},"
 			 + "\"should_dash_now\":{\"type\":\"noul\",\"instructions\":"
-			 + "\"就这一刻该用克苏鲁之盾冲刺吗?冲刺是朝当前移动方向猛冲一小段,有内置冷却。"
+			 + "\"如果 capabilities.dash_equipped 为 true,就这一刻该冲刺吗?否则必须回答否。冲刺是朝当前移动方向猛冲一小段,有内置冷却。"
 			 + "它能瞬间拉开一段距离、或者穿过一片危险区域;撞到敌人还会免掉那一下伤害。"
 			 + "但冲刺中方向不好改,乱冲会一头撞进本来躲得开的攻击里。\"},"
 			 + "\"should_jump_now\":{\"type\":\"noul\",\"instructions\":"
@@ -507,7 +506,7 @@ namespace TerraBlind
 			 + "\"现在这套打法有效吗?boss 的血在掉,而自己没有一直挨打。\"}"
 			 + "}}";
 
-		static void Fire(string key, string state)
+		static void Fire(string state)
 		{
 			_busy = true;
 			var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -515,10 +514,8 @@ namespace TerraBlind
 			{
 				try
 				{
-					using var req = new HttpRequestMessage(HttpMethod.Post, Url);
-					req.Headers.Add("Authorization", "Bearer " + key);
-					req.Content = new StringContent(Body(state), Encoding.UTF8, "application/json");
-					var res = await _http.SendAsync(req);
+					using var req = DecisionGateway.Request(Body(state));
+					using var res = await _http.SendAsync(req);
 					string txt = await res.Content.ReadAsStringAsync();
 					if (res.IsSuccessStatusCode) _pending = sw.ElapsedMilliseconds + "" + txt;
 					else DiagLog.Write($"[dodge] HTTP {(int)res.StatusCode}");
@@ -563,7 +560,7 @@ namespace TerraBlind
 			{
 				string tag = Act == _saidAct ? $"  [held {(now - _saidAt) / 1000}s]" : "";
 				_saidAct = Act; _saidAt = now;
-				Main.NewText($"<Jev> {Say(Act)}{tag}  ({TopTwo})  confidence {Confidence:0.00}  {ms}ms", 90, 230, 120);
+				Main.NewText($"<{DecisionGateway.Model}> {Say(Act)}{tag}  ({TopTwo})  confidence {Confidence:0.00}  {ms}ms", 90, 230, 120);
 			}
 
 			// Noul 【没有 confidence】,概率本身就是答案。0.7 当"是"
@@ -585,7 +582,7 @@ namespace TerraBlind
 					 + "  →  " + Last,
 				Confidence = Confidence,
 				Probs = Seg(intent, "probabilities") ?? "",
-				Why = "jev",
+				Why = DecisionGateway.Model,
 				LatencyMs = ms,
 			});
 		}
@@ -622,7 +619,9 @@ namespace TerraBlind
 		}
 
 		static float Num(string seg, string name, float dflt)
-			=> seg != null && float.TryParse(Field(seg, name), out float v) ? v : dflt;
+			=> seg != null && float.TryParse(Field(seg, name),
+				System.Globalization.NumberStyles.Float,
+				System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : dflt;
 
 		// 意图的人话。【聊天栏一律英文】,录像给外面的人看
 		static string Say(DodgeAct a) => a switch

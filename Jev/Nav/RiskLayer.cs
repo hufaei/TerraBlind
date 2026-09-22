@@ -7,7 +7,7 @@ namespace TerraBlind
 	{
 		public static bool Enabled = false;
 
-		// 权重是策略,归代码管。Jev 只给判断,不给策略
+		// 权重是确定性策略，归代码管；导航热路径不等待模型。
 		public const float FallPerHp = 3f;
 		public const float MobNear = 40f;
 		public const float MobFlying = 25f;

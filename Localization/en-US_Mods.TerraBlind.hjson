@@ -1,39 +1,3 @@
-Items: {
-	NavWand: {
-		DisplayName: Nav Wand
-		Tooltip: ""
-	}
-
-	MazeWand: {
-		DisplayName: Maze Wand
-		Tooltip:
-			'''
-			Left: maze path to target
-			Right: cost-field heatmap (green near goal, red far)
-			'''
-	}
-
-	RecordWand: {
-		DisplayName: Record Wand
-		Tooltip: Right: toggle recording human input
-	}
-}
-
-Keybinds: {
-	ToggleMazeNav.DisplayName: Toggle Maze Nav
-	ToggleRecedingNav.DisplayName: Toggle Receding Nav
-	ShowHellLine.DisplayName: Show Hell Bridge Line
-	PreviewDescent.DisplayName: Preview Descent And Bridge
-	TestPlatDown.DisplayName: Test Platform Descent
-	BuildHellBridge.DisplayName: Build Hell Bridge
-	ShowHouseSite.DisplayName: Show House Site
-	TestBridge.DisplayName: Test Bridge
-	TestRoom.DisplayName: Test Room
-	TestPillar.DisplayName: Test Pillar
-	TestReachWork.DisplayName: Test Reach Work
-	ShowMinima.DisplayName: Show Minima
-}
-
 Configs: {
 	Config: {
 		DisplayName: TerraBlind
@@ -52,16 +16,6 @@ Configs: {
 		AlwaysGillsAndShine: {
 			Label: Always Gills and Shine
 			Tooltip: Keeps the Gills and Shine buffs refreshed every frame, so the run does not drown or walk blind.
-		}
-
-		ShowOverlay: {
-			Label: Show debug overlay
-			Tooltip: Draws the bridge line, house box and treasure markers over the world. Turn it off before recording.
-		}
-
-		ShowPlannerTrails: {
-			Label: Show planner trails
-			Tooltip: Also draws the A* search dots and jump arcs. Dense enough to hide the terrain underneath.
 		}
 
 		AvoidDanger: {
@@ -89,13 +43,18 @@ Configs: {
 			Tooltip: ""
 		}
 
-		TypeSafeKey: {
-			Label: TypeSafe API key
-			Tooltip:
-				'''
-				Key for the Jev calls that drive boss fighting. Paste it here once and it is copied to the .env file in the mod source folder, which git and the mod build both skip.
-				Then clear this box: whatever stays here is also kept in plain text in ModConfigs/TerraBlind.json, so do not share that file.
-				'''
+		DecisionGatewayUrl: {
+			Label: Decision gateway URL
+			Tooltip: Local Decision Infra endpoint. Provider keys stay in the gateway, not in this mod.
+		}
+
+		DecisionModel: {
+			Label: Decision model
+			Tooltip: Exact gateway route ID, for example jev-latest or laya-multilingual.
 		}
 	}
+}
+
+Keybinds: {
+	ToggleRecedingNav.DisplayName: Navigate to cursor
 }

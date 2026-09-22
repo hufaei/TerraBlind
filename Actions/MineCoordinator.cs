@@ -232,7 +232,7 @@ namespace TerraBlind
 			// (现场:人在(1118,829)对着(1117,831)挥了 600 帧,sentinel 判 H 平线放弃整段)。
 			// 【只在这一帧开,同帧关】。LongArm 改的是 static tileRangeX,全局都读得到,
 			// 跨帧持有会让整个寻路以为手能伸 30 格。所以用 try/finally 保证挥完就还
-			// 【别抢别人的手臂】。捅向导那段(WofPrep)会长期开着 30 格,那时 LongArmBegin 是空操作,
+			// 【别抢别人的手臂】。其他长动作持有控制权时 LongArmBegin 是空操作,
 			// 我这儿的 finally 却会把它提前还掉。所以本来就开着就不碰
 			bool boosted = !Concessions.LongArmOn && !Reach.CanMine(p, tx, ty);
 			if (boosted)

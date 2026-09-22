@@ -5,7 +5,7 @@ namespace TerraBlind
 	// 一格坐标只有四种可能,这是全项目唯一的一份判据。
 	//
 	// 以前 Standable 有四份互不相同的实现(PathPlanner 认平台不算站、StateSpacePlanner 只查 2 行岩浆、
-	// ActionGraphPlanner 查满 3 行但不查岩浆),再加上散落的 PlatformAnchor / nearSupport / DropLands /
+	// 旧规划器查满 3 行但不查岩浆),再加上散落的 PlatformAnchor / nearSupport / DropLands /
 	// OverLavaVoid。同一个坑在不同路径上表现不同,就是这么来的。
 	public enum Cell
 	{

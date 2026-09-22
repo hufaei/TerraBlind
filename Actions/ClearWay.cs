@@ -4,10 +4,10 @@ namespace TerraBlind
 {
 	// 真实地形挡住人怎么办。挖开。地狱要塞的墙、矿脉、山体横在路上时,这是唯一的解法。
 	//
-	// 判据只有这一份:HellDeck 里原本有一套(DigWayForward),DeckBuilder 又漏写了一套,
-	// 于是同样的墙在老路径上能过、新路径上卡死。所有"被地形挡住"都该调这里。
+	// 所有“被地形挡住”的动作都走这一份判据，避免导航和搭桥各自维护一套。
 	public static class ClearWay
 	{
+		private const int HeadClear = 5;
 		// 手上最好的镐。没镐返回 -1 -- 那是真的过不去,得让调用方报出来。
 		// 【背包里的也算】:只扫热键栏的话,镐在背包里就等于"没镐",挖掘边一条都不生成,
 		// 人明明带着镐却被判成过不去。找到就用 HomeSlot 搬上热键栏(和放置料同一套搬运)。
@@ -28,7 +28,7 @@ namespace TerraBlind
 				if (it != null && !it.IsAir && it.pick > bagBest) { bagBest = it.pick; bagSlot = i; }
 			}
 			if (bagSlot < 0) return -1;
-			// 【只在主线程搬】。规划器(含后台的 ExploreCoordinator)也调这个函数,
+			// 【只在主线程搬】。后台规划器也调这个函数,
 			// 后台线程动 p.inventory 会和主线程撞车 -- Trap.ScanAhead 那次并发损坏就是这么来的。
 			// 后台只需要知道"有没有镐",返回背包里那个槽号就够。
 			if (MazeWand.OnMainThread)
@@ -45,8 +45,6 @@ namespace TerraBlind
 		{
 			// 平台不挖:能直接穿过去/跳上去,挖它是白费镐和时间
 			if (!Predicates.IsWall(x, y)) return false;
-			// 【正在铺的桥面不挖】。卡住时挖身前那格是对的,但上升段身前那格正是下一块桥面
-			if (DeckBuilder.OnLine(x, y)) return false;
 			// 【挖不动的当场认账】。地狱熔炉(tile 77)镐力不够 65 时伤害恒 0,
 			// 地狱祭坛/神庙砖同理。原来这儿不查,Dig 照样开挥并返回 true("我在处理"),
 			// 调用方每帧 return。人对着炉子挥一辈子。
@@ -86,7 +84,7 @@ namespace TerraBlind
 			bool step = !stuck && Predicates.IsWall(col, fy) && !Predicates.IsWall(col, fy - 1);
 			// 【挖 4 行,不是 3 行】。人走过去要占 3 行,头顶还得留一格跳的余量
 			// 只挖 3 行的话第 4 行那块砖照样把人顶住,跳不起来
-			for (int r = step ? 1 : 0; r <= DeckBuilder.HeadClear; r++)
+			for (int r = step ? 1 : 0; r <= HeadClear; r++)
 				if (Dig(p, col, fy - r, why)) return true;
 			return false;
 		}
@@ -98,8 +96,8 @@ namespace TerraBlind
 			var (bl, br) = Predicates.BodyCols(p);
 			int col = dir > 0 ? br + 1 : bl - 1;
 			int fy = ActExecutor.OriginCy(p);
-			for (int r = 0; r <= DeckBuilder.HeadClear; r++)
-				if (Predicates.IsWall(col, fy - r) && !DeckBuilder.OnLine(col, fy - r)) return false;
+			for (int r = 0; r <= HeadClear; r++)
+				if (Predicates.IsWall(col, fy - r)) return false;
 			return true;
 		}
 
@@ -110,7 +108,7 @@ namespace TerraBlind
 			int fy = ActExecutor.OriginCy(p);
 			// 身子占 fy..fy-2,从头顶那行往上挖到留出跳的余量为止。
 			// 只挖 fy-3 一行的话,连着几行的砖挖掉一层还是跳不动
-			for (int r = 3; r <= DeckBuilder.HeadClear; r++)
+			for (int r = 3; r <= HeadClear; r++)
 				for (int c = bl; c <= br; c++)
 					if (Dig(p, c, fy - r, why)) return true;
 			return false;

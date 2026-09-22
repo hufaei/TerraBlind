@@ -26,6 +26,8 @@ namespace TerraBlind
 		const int HpBuckets = 5;
 
 		static int _target = -1;
+		// 上次交给 brain 的目标。_target 会在释放按键时清空,不能兼任决策去重标记。
+		static int _sceneTarget = -1;
 		static bool _swinging;
 		static string _lastSig = "";
 		static int _lastHpBucket = -1;
@@ -138,7 +140,7 @@ namespace TerraBlind
 		{
 			int bucket = p.statLife * HpBuckets / System.Math.Max(1, p.statLifeMax);
 			if (bucket != _lastHpBucket) { _lastHpBucket = bucket; return true; }
-			if (worst != _target) return true;
+			if (worst != _sceneTarget) return true;
 
 			int live = 0;
 			for (int i = 0; i < Main.maxNPCs; i++)
@@ -176,7 +178,7 @@ namespace TerraBlind
 			if (p == null || !p.active || p.dead) { Release(); return; }
 
 			int n = Worst(p, out int tcx, out int tcy, out int dist);
-			if (n < 0) { Last = "no enemies"; _askedAt.Clear(); _target = -1; Release(); return; }
+			if (n < 0) { Last = "no enemies"; _askedAt.Clear(); _sceneTarget = -1; Release(); return; }
 
 			// 【boss 和它的部件都不问打不打】。骷髅王的手没有 boss 标志,走的是小怪那套措辞,
 			// 而那套问的是"要不要停下赶路" -- boss 战里根本没有赶路,于是 9 格也答 Ignore
@@ -200,14 +202,21 @@ namespace TerraBlind
 					});
 				}
 				_target = n;
+				_sceneTarget = n;
 			}
-			// 判断:局面变了才重新问。没变就沿用上次的结论,一个请求都不发
-			else if (Changed(p, n))
+			else
 			{
-				_call = _brain.Decide(p, tcx, tcy, dist, WorkBusy);
-				_target = n;
-				Remember(p);
-				string sig = _call.Act + "|" + n + "|" + _call.InterruptWork;
+				// 局面变了才发新请求;每帧只轮询内存中的异步结果,不等 HTTP。
+				if (Changed(p, n))
+				{
+					_call = _brain.Decide(p, tcx, tcy, dist, WorkBusy);
+					_sceneTarget = n;
+					Remember(p);
+				}
+				else if (_brain is JevCombat jev)
+					_call = jev.Poll(p, tcx, tcy, dist, WorkBusy);
+
+				string sig = _call.Act + "|" + n + "|" + _call.InterruptWork + "|" + _call.Why;
 				if (sig != _lastSig)
 				{
 					_lastSig = sig;
@@ -256,6 +265,7 @@ namespace TerraBlind
 				_swinging = true;
 				DiagLog.Write($"[combat] 挥 {Main.npc[n].TypeName} ({tcx},{tcy}) {dist}格 血{p.statLife}/{p.statLifeMax}");
 			}
+			_target = n;
 			Last = $"hitting {Main.npc[n].TypeName} at {dist}";
 		}
 
@@ -274,6 +284,6 @@ namespace TerraBlind
 			AxisLock.Release(Owner);
 		}
 
-		public static void Stop() { Release(); _askedAt.Clear(); _lastSig = ""; Last = "stopped"; }
+		public static void Stop() { Release(); _askedAt.Clear(); _sceneTarget = -1; _lastSig = ""; Last = "stopped"; }
 	}
 }

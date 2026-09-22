@@ -1,114 +1,67 @@
-# 已有能力清单
+# 能力边界
 
-动手前先查这里。造轮子之前先搜一遍关键词。
+这份清单描述当前代码的产品边界。游戏内能力不等于 HTTP 接口；HTTP 只负责状态和
+Jev 日志观测。
 
-约定:
-- **异步原语** = `POST /x` 返回 `{accepted}` → 轮询 `/x_status` 拿 `{outcome}` → `/x_stop` 中止。
-  `outcome` 取值:`running` / `done` / 各自的失败原因。
-- 所有原语的终止判据都是**读世界事实**(格子里有没有那个 tile、脚有没有落地),不是帧数。
+## 保留的游戏内能力
 
----
-
-## 1. 移动
-
-| 能力 | 接口 | 说明 |
+| 能力 | 主要实现 | 说明 |
 |---|---|---|
-| 跨地形寻路 | `/nav_recede` + `_done` `_stop` | 主力。会跳/挖/搭桥/砸罐子。**容差 24px(1.5格)**,停在隔壁列也算"到了" |
-| **精确对齐到某一列** | `/settle {col}` | `SettleAt`。按 vanilla `runSlowdown` 算刹车距离,判定=中心距列心 ≤8px。**nav 之后要精确站位就用它** |
-| 跳到某一行(可先对齐列) | `/hop_up {row, col}` | `col` 可选,给了就先横向走到那列再跳。内部有 Align 相位 |
-| 走到平台边缘 | `/walk_to_edge {direction, extra_tiles}` | |
-| 从平台掉下去 | `/drop` | 按住 `controlDown` 穿过脚下平台,落到实心地面 |
-| **踩平台竖直下降** | `PlatformDown.Start(item, targetWy)` (键 O) | 铺→按一下S→重复,降到 targetWy。**人占的每一列都要铺**(只铺一列会被隔壁砖顶住);砖靠**物块替换**直接换成平台(`builderAccStatus[10]=0`),厚砖层一格格啃;S 是**按一下**不是按住;到岩浆停 |
-| 单次跳跃 | `/jump` `/exec_jump_to` | |
+| 状态快照 | `Perception/StateSnapshotPlayer.cs`、`StateSerializer.cs` | 供游戏逻辑、Jev 和 `/state` 使用 |
+| 物理模拟 | `Perception/PhysicsSimulator.cs` | 为寻路候选预测移动结果 |
+| 寻路 | `Nav/RecedingNav.cs`、`StateSpacePlanner.cs` | 鼠标指向目标后按 `K` 启停；不提供 HTTP 控制端点 |
+| 自动清障 | `RecedingNav.SmashPot` / `SmashWeb` | 赶路时自动砸罐子和清蛛网，继续保留 |
+| 动作执行 | `Actions/`、`Core/ActExecutor.cs` | 移动、跳跃、挖掘和放置的内部执行器 |
+| 生存反射 | `Flow/SurvivalReflex.cs` | 自动处理即时危险；不提供远程触发入口 |
+| 导航风险与卡住分诊 | `Jev/Nav/` | 确定性判据和观测日志；当前不请求模型 |
+| Jev boss 战 | `Jev/Fight/` | 战斗意图、能力检查、boss 背板和执行 |
+| Jev 可观测性 | `JevHud`、`JevLog`、`JevPage` | HUD、环形日志和本地页面 |
 
-## 2. 建造
+## Decision Infra 契约
 
-| 能力 | 接口 | 说明 |
+TerraBlind 只调用 Decision Infra 的 Jev 兼容入口：
+
+```text
+POST http://127.0.0.1:8080/v1/systemone
+```
+
+- 默认路由 ID：`jev-latest`。
+- 可选本地路由 ID：`laya-multilingual`。
+- URL 和模型来自模组配置。
+- TypeSafe key 和模型权重由 gateway 管理，不能进入模组或 `.tmod`。
+- `DECISION_GATEWAY_TOKEN` 只用于要求 Bearer token 的自建 gateway 或反向代理；
+  默认 loopback Decision Infra 不需要它。
+
+## 完整 HTTP API
+
+监听地址固定为 `http://127.0.0.1:17878`。
+
+| 方法 | 路径 | 响应 |
 |---|---|---|
-| 搭绳梯 | `/rope_ladder {item, n}` | 从人脚下那列往上。列在开工时钉死。status 报 `top` / `above_top` 给后续步骤当锚点 |
-| 搭平台桥 | `/bridge {item, dir, n}` | 横向。放到手够不着就走出去再放 |
-| 搭平台柱 | `/pillar {n}` | 往上。人右边一列,够不着就跳起来放 |
-| 放背景墙 | `/place_walls {cells[]}` | 严格按给定顺序(vanilla 墙体合并依赖顺序) |
-| 放一个东西 | `/place_at {item, x, y}` | 语义放置:只说放什么、放哪 |
-| 边走边放家具 | `/walk_place {dest_x, targets[]}` | 走向目标列,路过够得着的目标就放 |
-| 录制/回放建筑 | `/build_rec_start` `/build_replay_start` | 世界 diff 记录最终结构,不是记录过程 |
+| `GET` | `/health` | `{"ok":true}` |
+| `GET` | `/state` | 最新 `Snapshot` 的 JSON 序列化 |
+| `GET` | `/jev` | 单文件 HTML 日志页面 |
+| `GET` | `/jev_log` | `{"count":N,"entries":[...]}` |
+| `POST` | `/jev_clear` | 清空日志并返回 `{"ok":true}` |
 
-## 3. 感知(只读,同步返回)
+只有以上方法与路径组合有效：未知路径返回 `404`，错误方法返回 `405`。
+没有 WebSocket、通用动作、流程触发、传送、背包、建造或调试 HTTP 接口。
 
-| 能力 | 接口 | 说明 |
-|---|---|---|
-| 玩家+世界快照 | `/state` | 背包只报非空槽,带绝对 slot |
-| **脚下那一格** | `/origin` | 覆盖像素最多的列,平分取左 |
-| 读一片地形 | `/terrain {cx,cy,w,h}` | ASCII:`.`空 `#`实心 `-`平台 `+`有tile但非固体(树/草/藤) |
-| 单格详情 | `/probe_cell {x,y}` | |
-| 找某种 tile | `/find_tiles` | |
-| 能不能站 | `/can_stand {x,y}` | |
-| 找平地 | `/scan_flat {w,h,hazard_r,range}` | |
-| **找房址(L形)** | `/scan_house {w,h,rope_h,range}` | 验证:落脚点 `CanStand` + 绳梯列 `Vacant` + 顶上 w×h `Vacant`。**注意:只验证落脚点那一列** |
-| 房间合法性 | `/room_check {x,y}` | |
-| 背包有多少 | `/have {id}` | |
-| 到某格的真实代价 | `/path_cost {x,y}` | 返回 `dig` / `walk` 的**格数**(不是 cost) |
-| 下地狱路线 | `/find_descent` `/descent_route` | |
-| 找生物群系 | `/find_biome {name}` | |
-| 找 NPC | `/npc_find {type}` | |
-| 配方查询 | `/recipe {item}` | 返回材料 need/have + 需要的工作台 |
+## 已删除
 
-### Predicates（C# 内部谓词，写 mod 时直接用）
-`InBounds` `IsSolid` `IsGround` `IsPassable` `IsLava` `IsAnyLiquid` `CanStand`
-`Headroom(cap)` `ClearWidth(cap)` `NearHazard(r,lavaOnly)` **`Vacant`** `ScanHouse` `ScanFlat`
-`RoomJson` `Have` `NpcJson` `CellJson`
-
-> **`IsPassable` ≠ `Vacant`**:树/草是"不挡路"但"格子被占",放不进东西。
-> 要判断能不能放置,用 `Vacant`(`!HasTile && WallType==0`)。这个坑踩过两次。
-
-## 4. 动作
-
-| 能力 | 接口 | 说明 |
-|---|---|---|
-| 通用动作原语 | `/act {steps[]}` | 步骤串行、步内并行。每步必须带 `until`。`invariant` 三选一 |
-| 挖 | `/mine` `/mine_reach` | |
-| 用物品(带观测) | `/item_use` + `_status` | 放置会观测目标格是否长出 `createTile` |
-| 交互 | `/interact` | 开箱子等 |
-| 合成 | `/craft` | 按内部名解析,失败报 `free_slots` |
-| 全部拾取 | `/loot_all` | |
-| 打架 | `/fight` `/fight_active` | |
-| 喝药 | `/quick_heal` | |
-| 换手持 | `/swap` | |
-
-## 5. 保命 / 反卡(自动，不用调)
-
-| 能力 | 位置 | 说明 |
-|---|---|---|
-| 保命反射 | `SurvivalReflex` | 每帧跑。跳出岩浆、掉血喝药。触发后推 `interrupted` 事件 |
-| 卡死哨兵 | `StuckSentinel` | 每帧看四个信号(位移/H/挖掘伤害/周围tile)。0.5s 内走安全步,6-8s 放弃这段 |
-| 顺手砸罐子/蜘蛛网 | `RecedingNav.SmashPot/SmashWeb` | 赶路时自动 |
-| 平台自动补货 | `second_player._top_up_platforms` | 少于 50 就合成到 150,每段路开始前查一次 |
-
-## 6. 调试
-
-| 能力 | 接口 |
+| 旧编号 | 已删除范围 |
 |---|---|
-| 断点/单步 | `/breakpoint_set` `/step_node` `/continue` `/freeze` `/unfreeze` |
-| 决策可视化 | `RecedingVis` — 白框=当前H,蓝线=场梯度,绿框=降H候选,黄框=选中 |
-| 卡死快照 | `StuckSnapshot` — 检测到循环时把整个决策局面写盘 |
-| 日志 | `Main.SavePath/TerraBlindLogs/jump_trace.log`,每段路另存 `runs/sx_sy__gx_gy.log` |
+| C8 | 地下、丛林和地狱路线搜索及预览 |
+| D6 | NPC 房屋自动建造 |
+| D7 | 地狱长桥规划与建造 |
+| D8 | 建筑录制与回放 |
+| F1–F8 | 从新世界开局到肉山的完整通关流程 |
+| G6–G10 | Agent 控制、流程触发和相关调试面 |
 
----
+对应的 `/start_run`、`/hell_run`、`/find_descent`、`/descent_route`、
+`/build_rec_start`、`/build_replay_start` 以及其他旧控制端点不再存在。
 
-## 已知的坑
+## 明确保留
 
-1. **`IsPassable` ≠ `Vacant`** — 见上。树干那一列 `IsPassable` 全过,但绳子放不进去。
-2. **nav 容差 1.5 格** — 要精确站位必须 nav 之后再 `/settle`。
-3. **原语默认用"人现在站的那一列"** — `rope_ladder`/`pillar` 都是。人飘一格,东西就盖到隔壁去了。传坐标或先 settle。
-4. **`ItemID.Search` 查内部名** — `createItem.Name` 在中文环境返回中文,别用来匹配。
-5. **绳子叫「绳」不叫「绳子」** — 本地化表里是 `ItemName/Rope = "绳"`。
-6. **`StepCost` 的 `Impassable = int.MaxValue`** — 相加会溢出成大负数,消费方必须先 `continue`。
-7. **玩家 20px 宽 / 42px 高** — 占 2 列 3 行。方块和平台放不进碰撞箱,绳子可以。
-
-## 已实现但目前没用上的
-
-`/scan_flat` `/room_check` `/npc_find` `/measure` `/nav_h` `/can_stand` `/jump_envelope`
-`/mark_placeable` `/sim_jump` `/test_plat_*` `/debug_jump_edges` `WaypointPlanner` `SegmentedNavCoordinator`
-`ActionGraphPlanner`(被 `StateSpacePlanner` 取代) `BuildOverlay`
-
-> 需要类似功能时先看这一节 —— 大概率已经有了。
+自动砸罐子和清蛛网不属于已删除的建筑/通关流程。它们仍是
+`RecedingNav` 的内部寻路清障行为，不需要也不提供 HTTP 端点。

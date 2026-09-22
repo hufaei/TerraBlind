@@ -2462,29 +2462,6 @@ namespace TerraBlind
         public static void ResetFloor() { _visited.Clear(); _visitedQ.Clear(); _recent.Clear(); }
         public static void RequestJiggle() { }
 
-        // 区域内累积的边罚分。让循环无法复现的隐藏状态,也是"一条好边反而全场最贵"的原因。
-        static List<Cand> _lastCands;
-        static (int cx, int cy, int h) _lastAt;
-        static (int gx, int gy) _lastGoal;
-        public static string CaptureStuck(string why, string trail) =>
-            StuckSnapshot.Capture(_lastAt.cx, _lastAt.cy, _lastAt.h, _lastGoal.gx, _lastGoal.gy, _lastCands, why, trail);
-
-        public static string PenaltyJson(int x0, int y0, int x1, int y1)
-        {
-            var sb = new System.Text.StringBuilder();
-            bool first = true;
-            foreach (var kv in _miss)
-            {
-                var (fx, fy, tx, ty) = kv.Key;
-                if (fx < x0 || fx > x1 || fy < y0 || fy > y1) continue;
-                if (!first) sb.Append(',');
-                first = false;
-                sb.Append("{\"from\":[").Append(fx).Append(',').Append(fy).Append("],\"to\":[")
-                  .Append(tx).Append(',').Append(ty).Append("],\"p\":").Append(kv.Value.ToString("0.#")).Append('}');
-            }
-            return sb.ToString();
-        }
-
         internal static void PenalizeEdges(System.Collections.Generic.IEnumerable<(int fx, int fy, int tx, int ty)> edges, float amount)
         {
             foreach (var e in edges)
@@ -2733,7 +2710,6 @@ namespace TerraBlind
             }
             if (_visited.Add((curCx, curCy))) _visitedQ.Enqueue((curCx, curCy));
             while (_visitedQ.Count > VisitedLen) _visited.Remove(_visitedQ.Dequeue());
-            _lastCands = cands; _lastAt = (curCx, curCy, curH); _lastGoal = (goalWx, goalWy);
             RecedingVis.SetDecision(curCx, curCy, curH, goalWx, goalWy, cands, best != null ? bestCell : ((int, int)?)null, best != null ? curH - bestTotal : 0f, dS, dM, dL);
             // 只打【上升类】候选:全打太长,而"该 pillar 却在一格一格跳"要看的正是这些
             {

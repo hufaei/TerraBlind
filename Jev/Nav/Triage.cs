@@ -2,11 +2,11 @@ using System.Diagnostics;
 
 namespace TerraBlind
 {
-	// 分诊的唯一入口。现在只观测:把现场和 baseline 的选择记下来,不改任何行为。
-	// 等 Jev 接上,这里再比对两边选得一样不一样
+	// 分诊的唯一入口。卡住恢复仍由确定性 baseline 决定并记录，
+	// 不伪装成一次模型调用；模型当前只参与战斗和 boss 走位。
 	public static class Triage
 	{
-		static readonly IStuckTriage _impl = new JevTriage();
+		static readonly IStuckTriage _impl = new BaselineTriage();
 		static readonly Stopwatch _clock = Stopwatch.StartNew();
 
 		public static void Observe(in StuckScene s)

@@ -3,8 +3,7 @@ using Terraria;
 
 namespace TerraBlind
 {
-	// 卡住那一刻的现场,序列化成 Jev 的 state。
-	// Jev 只吃【一个文本字段】,所以所有上下文都得编进这一份 JSON(文档建议 named JSON fields)
+	// 卡住那一刻的现场。序列化后进入本地观测日志，方便复盘确定性分诊。
 	public struct StuckScene
 	{
 		public int Cx, Cy;             // 人脚下那一格
